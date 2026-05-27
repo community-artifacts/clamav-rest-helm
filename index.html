@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>clamav-rest — Production-ready Helm chart for a REST ClamAV scanner</title>
+<meta name="description" content="Production-oriented Helm chart for a REST-fronted ClamAV antivirus scanner. Hosted on GitHub Pages by community-artifacts.">
+<link rel="canonical" href="https://community-artifacts.github.io/clamav-rest-helm/">
+<style>
+  :root {
+    --fg: #1f2328;
+    --muted: #57606a;
+    --link: #0969da;
+    --bg: #ffffff;
+    --code-bg: #f6f8fa;
+    --border: #d0d7de;
+    --accent: #b22222;
+    --max-width: 880px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e6edf3;
+      --muted: #8b949e;
+      --link: #4493f8;
+      --bg: #0d1117;
+      --code-bg: #161b22;
+      --border: #30363d;
+      --accent: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: var(--max-width); margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1 { font-size: 2.2rem; margin: 0.25rem 0 0.5rem; }
+  h2 { font-size: 1.4rem; margin: 2.25rem 0 1rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code { background: var(--code-bg); padding: 0.15em 0.35em; border-radius: 4px; font-size: 0.9em; }
+  pre { background: var(--code-bg); padding: 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; font-size: 0.875em; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; }
+  ul { padding-left: 1.5rem; }
+  li { margin: 0.25rem 0; }
+  .center { text-align: center; }
+  .center img.logo { height: 110px; width: auto; max-width: 320px; }
+  .badges { margin: 1rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
+  .badges a { display: inline-flex; }
+  .badges img { display: block; }
+  .lead { color: var(--muted); margin: 0.5rem 0 0; }
+  .muted { color: var(--muted); }
+  .endpoint { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <div class="center">
+    <img class="logo" src="https://community-artifacts.github.io/clamav-rest-helm/logo.png" alt="ClamAV">
+    <h1>clamav-rest</h1>
+    <p class="lead"><strong>Production-ready Helm chart for a REST-fronted <a href="https://www.clamav.net">ClamAV</a> antivirus scanner.</strong></p>
+    <p class="badges">
+      <a href="https://github.com/community-artifacts/clamav-rest-helm/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/community-artifacts/clamav-rest-helm?color=blue"></a>
+      <a href="https://github.com/community-artifacts/clamav-rest-helm/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/community-artifacts/clamav-rest-helm?label=chart&amp;color=brightgreen"></a>
+      <a href="https://www.clamav.net"><img alt="ClamAV" src="https://img.shields.io/badge/ClamAV-REST-b22222"></a>
+      <a href="https://kubernetes.io"><img alt="Kubernetes" src="https://img.shields.io/badge/kubernetes-%E2%89%A51.23-326ce5"></a>
+      <a href="https://artifacthub.io/packages/search?repo=clamav-rest-api"><img alt="Artifact Hub" src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/clamav-rest-api"></a>
+    </p>
+  </div>
+
+  <hr>
+
+  <h2>Quick start</h2>
+  <pre><code>helm repo add clamav-rest https://community-artifacts.github.io/clamav-rest-helm
+helm repo update
+helm install av clamav-rest/clamav-rest</code></pre>
+  <p>Then scan a file over the REST API:</p>
+  <pre><code>kubectl port-forward svc/av-clamav-rest 9000:9000 &amp;
+curl -F 'file=@/path/to/file' http://localhost:9000/v2/scan</code></pre>
+  <p>Need a <code>values.yaml</code>? See the <a href="https://github.com/community-artifacts/clamav-rest-helm/blob/main/charts/clamav-rest/README.md"><strong>full values reference</strong></a> and the <a href="https://github.com/community-artifacts/clamav-rest-helm/tree/main/tests/scenarios">example overlays</a> in the repo.</p>
+
+  <h2>What&rsquo;s inside</h2>
+  <p>An opinionated, hardened deployment of a REST-fronted ClamAV scanner — safe defaults, everything heavyweight opt-in:</p>
+  <ul>
+    <li><strong>REST scan API</strong> on <code>:9000</code> — <span class="endpoint">POST /v2/scan</span>, <span class="endpoint">/scanFile</span>, <span class="endpoint">/scanPath</span>, <span class="endpoint">/version</span>, <span class="endpoint">/metrics</span></li>
+    <li><strong>TLS</strong> on <code>:9443</code> — inline cert/key or <code>existingSecret</code></li>
+    <li><strong>Signature-DB persistence</strong> — optional PVC at <code>/clamav/data</code> (keep policy enforced) to warm cold starts</li>
+    <li><strong>freshclam config overlay</strong> + <strong>forward-proxy</strong> support (proxy password via Secret) for restricted egress</li>
+    <li><strong>Autoscaling</strong> — HPA v2 (CPU + memory) with a custom <code>behavior</code> block</li>
+    <li><strong>PodDisruptionBudget</strong> — fail-loud guard against conflicting <code>minAvailable</code>/<code>maxUnavailable</code></li>
+    <li><strong>NetworkPolicy</strong> — default-deny + freshclam egress + Prometheus allow, plus a <strong>CiliumNetworkPolicy</strong> with FQDN-locked egress for <code>*.clamav.net</code></li>
+    <li><strong>Observability</strong> — <code>ServiceMonitor</code> for the image&rsquo;s <code>/metrics</code> endpoint</li>
+    <li><strong>Image-pull credentials</strong> via External Secrets Operator (<code>dockerconfigjson</code> from Vault)</li>
+    <li><strong><code>extraManifests</code></strong> escape hatch — arbitrary extra resources, templated against the release context</li>
+    <li><strong><code>values.schema.json</code></strong> shipped with the chart, so <code>helm install --set foo=bar</code> is validated client-side</li>
+  </ul>
+
+  <h2>Probes &amp; cold-start</h2>
+  <p>The image has no dedicated <code>/healthz</code>; probes target <code>/</code>, which returns <code>200</code> only once <code>clamd</code> has loaded the signature database (30&ndash;120&nbsp;s cold). Two levers: enable <code>persistence.enabled=true</code> to reuse the DB across restarts, or <code>startupProbe.enabled=true</code> to decouple cold-start tolerance from the liveness probe.</p>
+
+  <h2>Versions</h2>
+  <p>SemVer; full changelog in <a href="https://github.com/community-artifacts/clamav-rest-helm/blob/main/charts/clamav-rest/RELEASE-NOTES.md"><code>RELEASE-NOTES.md</code></a>. <code>appVersion</code> tracks the rolling <code>ajilaag/clamav-rest</code> image (pin <code>image.tag</code> to a digest in production).</p>
+  <table>
+    <thead>
+      <tr><th>Chart</th><th><code>appVersion</code></th><th>Highlights</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>0.1.0</code></td><td><code>latest</code></td><td>Initial release: Deployment + TLS, freshclam overlay, PVC, HPA, PDB, NetworkPolicy (vanilla + Cilium), ServiceMonitor, ESO image-pull credential, <code>extraManifests</code></td></tr>
+    </tbody>
+  </table>
+  <pre><code># pin a specific version
+helm install av clamav-rest/clamav-rest --version 0.1.0</code></pre>
+
+  <h2>Source, issues, contributing</h2>
+  <ul>
+    <li><strong>Chart source</strong>: <a href="https://github.com/community-artifacts/clamav-rest-helm">https://github.com/community-artifacts/clamav-rest-helm</a></li>
+    <li><strong>Issue tracker</strong>: <a href="https://github.com/community-artifacts/clamav-rest-helm/issues">https://github.com/community-artifacts/clamav-rest-helm/issues</a></li>
+    <li><strong>Contributing guide</strong>: <a href="https://github.com/community-artifacts/clamav-rest-helm/blob/main/CONTRIBUTING.md"><code>CONTRIBUTING.md</code></a></li>
+    <li><strong>ClamAV project</strong>: <a href="https://www.clamav.net">https://www.clamav.net</a></li>
+  </ul>
+</main>
+</body>
+</html>
