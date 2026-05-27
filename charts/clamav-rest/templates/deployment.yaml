@@ -1,0 +1,172 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "clamav-rest.fullname" . }}
+  labels:
+    {{- include "clamav-rest.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "clamav-rest.selectorLabels" . | nindent 6 }}
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  minReadySeconds: {{ .Values.minReadySeconds }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.freshclamConfig.enabled }}
+        checksum/freshclam: {{ include (print $.Template.BasePath "/configmap-freshclam.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "clamav-rest.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with (include "clamav-rest.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "clamav-rest.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: {{ include "clamav-rest.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.port }}
+              protocol: TCP
+            {{- if .Values.tls.enabled }}
+            - name: https
+              containerPort: {{ .Values.config.sslPort }}
+              protocol: TCP
+            {{- end }}
+            {{- with .Values.extraPorts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "clamav-rest.fullname" . }}
+          {{- if or .Values.proxy.server .Values.proxy.port .Values.proxy.username .Values.proxy.password .Values.proxy.existingSecret .Values.extraEnv }}
+          env:
+            {{- if .Values.proxy.server }}
+            - name: PROXY_SERVER
+              value: {{ .Values.proxy.server | quote }}
+            {{- end }}
+            {{- if .Values.proxy.port }}
+            - name: PROXY_PORT
+              value: {{ .Values.proxy.port | quote }}
+            {{- end }}
+            {{- if .Values.proxy.username }}
+            - name: PROXY_USERNAME
+              value: {{ .Values.proxy.username | quote }}
+            {{- end }}
+            {{- if or .Values.proxy.password .Values.proxy.existingSecret }}
+            - name: PROXY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "clamav-rest.proxySecretName" . }}
+                  key: {{ .Values.proxy.existingSecretKey | default "proxy-password" }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.startupProbe.enabled }}
+          startupProbe:
+            {{- omit .Values.startupProbe "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.tls.enabled .Values.freshclamConfig.enabled .Values.persistence.enabled }}
+          volumeMounts:
+            {{- if .Values.tls.enabled }}
+            - name: tls-certs
+              mountPath: /etc/ssl/clamav-rest
+              readOnly: true
+            {{- end }}
+            {{- if .Values.freshclamConfig.enabled }}
+            - name: freshclam-config
+              mountPath: /clamav/etc/freshclam.conf
+              subPath: freshclam.conf
+              readOnly: true
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: clamav-data
+              mountPath: /clamav/data
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.tls.enabled .Values.freshclamConfig.enabled .Values.persistence.enabled }}
+      volumes:
+        {{- if .Values.tls.enabled }}
+        - name: tls-certs
+          secret:
+            secretName: {{ include "clamav-rest.tlsSecretName" . }}
+            items:
+              - key: tls.crt
+                path: server.crt
+              - key: tls.key
+                path: server.key
+        {{- end }}
+        {{- if .Values.freshclamConfig.enabled }}
+        - name: freshclam-config
+          configMap:
+            name: {{ include "clamav-rest.freshclamConfigMapName" . }}
+            items:
+              - key: freshclam.conf
+                path: freshclam.conf
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: clamav-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "clamav-rest.fullname" .) }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

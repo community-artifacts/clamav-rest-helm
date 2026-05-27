@@ -1,0 +1,55 @@
+{{- $fullname := include "clamav-rest.fullname" . -}}
+ClamAV REST scanner deployed as `{{ $fullname }}` in `{{ .Release.Namespace }}`.
+
+1. Get the application URL:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ $fullname }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.service.type }}
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ $fullname }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo http://$SERVICE_IP:{{ .Values.service.httpPort }}
+{{- else }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ $fullname }} {{ .Values.service.httpPort }}:{{ .Values.service.httpPort }}
+{{- end }}
+
+2. Probe it:
+  curl -i http://localhost:{{ .Values.service.httpPort }}/
+
+3. Scan a file (multipart/form-data, v2 endpoint):
+  curl -F 'file=@/path/to/file' http://localhost:{{ .Values.service.httpPort }}/v2/scan
+
+{{- if .Values.tls.enabled }}
+
+TLS is enabled. HTTPS is available on port {{ .Values.service.httpsPort }}.
+{{- else }}
+
+TLS is disabled. Only HTTP is available — enable it with `--set tls.enabled=true`
+and either inline certs (`tls.cert` / `tls.key`) or `tls.existingSecret`.
+{{- end }}
+
+{{- if and .Values.persistence.enabled (gt (int .Values.replicaCount) 1) }}
+
+!!! WARNING: persistence.enabled=true with replicaCount={{ .Values.replicaCount }}.
+    The default accessMode is ReadWriteOnce — multiple replicas will fail to bind
+    unless your StorageClass supports ReadWriteMany. Reduce replicaCount to 1 or
+    set persistence.accessModes accordingly.
+{{- end }}
+
+{{- if and .Values.autoscaling.enabled (not .Values.podDisruptionBudget.enabled) }}
+
+Hint: you enabled autoscaling but no PodDisruptionBudget. Consider setting
+`podDisruptionBudget.enabled=true` so voluntary disruptions can't take the
+service below `minReplicas`.
+{{- end }}
+
+{{- if and .Values.metrics.serviceMonitor.enabled .Values.networkPolicy.enabled (not .Values.networkPolicy.vanilla) }}
+
+!!! ServiceMonitor is enabled but networkPolicy.vanilla=false — the default
+    Prometheus scrape allow rule will not render. Add an explicit ingress
+    rule in `networkPolicy.additionalIngress` or enable `networkPolicy.vanilla`.
+{{- end }}

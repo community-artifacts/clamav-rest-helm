@@ -1,0 +1,46 @@
+name: Release Charts
+
+# Triggers ONLY on push to main (or manual). main is reached exclusively via
+# PRs from `develop`, and develop in turn only reaches main after the
+# Validate Chart workflow on develop passes. Direct pushes to main outside
+# of merged PRs are blocked by branch protection — see CONTRIBUTING.md.
+#
+# Charts are published UNSIGNED. To enable provenance signing for Artifact
+# Hub's "Signed" badge, add CR_GPG_KEY / CR_GPG_PASSPHRASE / CR_GPG_KEY_NAME
+# repo (or org) secrets and re-introduce the GPG import + CR_SIGN env block
+# (see the clamav-rest-helm history or the community-artifacts/n8n-helm
+# release.yml for the reference implementation).
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        with:
+          charts_dir: charts
+          skip_existing: true
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

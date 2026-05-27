@@ -1,0 +1,11 @@
+{{- if and .Values.freshclamConfig.enabled .Values.freshclamConfig.config (not .Values.freshclamConfig.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "clamav-rest.fullname" . }}-freshclam
+  labels:
+    {{- include "clamav-rest.labels" . | nindent 4 }}
+data:
+  freshclam.conf: |
+    {{- .Values.freshclamConfig.config | nindent 4 }}
+{{- end }}

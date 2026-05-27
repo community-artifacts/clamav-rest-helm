@@ -1,0 +1,35 @@
+apiVersion: v2
+name: clamav-rest
+description: |-
+  Production-oriented Helm chart for a REST-fronted ClamAV antivirus
+  scanning service. Independent distribution maintained by the
+  community-artifacts organisation. Ships additive operational knobs
+  (TLS, freshclam config, HPA/PDB, NetworkPolicy + CiliumNetworkPolicy,
+  ServiceMonitor, persistence for the signature database, proxy support
+  for freshclam, ExternalSecret-based image pull credentials).
+type: application
+version: 0.1.0
+appVersion: "latest"
+kubeVersion: ">=1.23.0-0"
+home: https://github.com/community-artifacts/clamav-rest-helm
+icon: https://community-artifacts.github.io/clamav-rest-helm/logo.png
+keywords:
+  - clamav
+  - antivirus
+  - rest
+  - virus-scan
+  - security
+  - malware
+sources:
+  - https://github.com/community-artifacts/clamav-rest-helm
+maintainers:
+  - name: community-artifacts
+    url: https://github.com/community-artifacts
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/links: |
+    - name: Chart Source
+      url: https://github.com/community-artifacts/clamav-rest-helm
+  artifacthub.io/changes: |
+    - kind: added
+      description: "Initial release. Production-ready Deployment for a REST-fronted ClamAV scanner with TLS, freshclam config override, optional PVC for the signature database, HPA, PDB, NetworkPolicy (vanilla + Cilium), ServiceMonitor, and ExternalSecret-based image pull credentials."

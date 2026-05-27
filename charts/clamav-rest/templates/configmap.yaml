@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "clamav-rest.fullname" . }}
+  labels:
+    {{- include "clamav-rest.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.config.port | quote }}
+  SSL_PORT: {{ .Values.config.sslPort | quote }}
+  MAX_SCAN_SIZE: {{ .Values.config.maxScanSize | quote }}
+  MAX_FILE_SIZE: {{ .Values.config.maxFileSize | quote }}
+  MAX_RECURSION: {{ .Values.config.maxRecursion | quote }}
+  MAX_FILES: {{ .Values.config.maxFiles | quote }}
+  MAX_EMBEDDEDPE: {{ .Values.config.maxEmbeddedPE | quote }}
+  MAX_HTMLNORMALIZE: {{ .Values.config.maxHtmlNormalize | quote }}
+  MAX_HTMLNOTAGS: {{ .Values.config.maxHtmlNoTags | quote }}
+  MAX_SCRIPTNORMALIZE: {{ .Values.config.maxScriptNormalize | quote }}
+  MAX_ZIPTYPERCG: {{ .Values.config.maxZipTypeRcg | quote }}
+  MAX_PARTITIONS: {{ .Values.config.maxPartitions | quote }}
+  MAX_ICONSPE: {{ .Values.config.maxIconsPE | quote }}
+  MAX_RECONNECT_TIME: {{ .Values.config.maxReconnectTime | quote }}
+  PCRE_MATCHLIMIT: {{ .Values.config.pcreMatchLimit | quote }}
+  PCRE_RECMATCHLIMIT: {{ .Values.config.pcreRecMatchLimit | quote }}
+  SIGNATURE_CHECKS: {{ .Values.config.signatureChecks | quote }}
+  ALLOW_ORIGINS: {{ .Values.config.allowOrigins | quote }}
+  TZ: {{ .Values.config.timezone | quote }}

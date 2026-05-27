@@ -1,0 +1,4 @@
+# Scenario 01: Defaults — single Deployment, HTTP only, no TLS / persistence /
+# autoscaling. The "zero-flags" install that most quick-start users hit first.
+#
+# (Empty overrides: rely entirely on chart defaults.)

@@ -1,0 +1,19 @@
+# Scenario 05: locked-down networking + Prometheus scraping.
+# Exercises the vanilla NetworkPolicy (default-deny + freshclam egress +
+# Prometheus allow), the CiliumNetworkPolicy (FQDN egress), and the
+# ServiceMonitor.
+networkPolicy:
+  enabled: true
+  vanilla: true
+  cilium: true
+  prometheusNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: monitoring
+  prometheusPodSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+metrics:
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: prometheus

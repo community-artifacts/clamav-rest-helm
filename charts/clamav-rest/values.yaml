@@ -1,0 +1,433 @@
+# =============================================================================
+# clamav-rest — values.yaml
+# Source of truth for user-facing config. Every key has a `# --` comment
+# that drives the generated values reference in README.md.
+# =============================================================================
+
+# -- Number of replicas. Ignored when autoscaling.enabled=true.
+replicaCount: 2
+
+image:
+  # -- Container image repository (must serve the REST-fronted ClamAV scanner).
+  repository: ajilaag/clamav-rest
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag. Defaults to .Chart.AppVersion. Pinning to a
+  # digest (e.g. `sha-deadbeef`) is strongly recommended in production.
+  tag: ""
+
+# -- Image pull secrets for private registries. Stringified secret names.
+imagePullSecrets: []
+# -- Override the chart name segment in resource names.
+nameOverride: ""
+# -- Override the fully qualified resource name (release-name + chart-name).
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Create a dedicated ServiceAccount.
+  create: true
+  # -- Annotations to add to the ServiceAccount (e.g. IRSA / Workload Identity).
+  annotations: {}
+  # -- Name of the ServiceAccount to use. Generated if empty.
+  name: ""
+  # -- automountServiceAccountToken on the ServiceAccount. The chart does not
+  # call the Kubernetes API at runtime, so the default is off.
+  automountServiceAccountToken: false
+
+# -- Annotations applied to each pod (merged with the config checksum).
+podAnnotations: {}
+
+# -- Extra labels applied to each pod.
+podLabels: {}
+
+# -- Pod-level security context. The upstream image runs as the `clamav`
+# user (uid/gid 100/101 in the alpine base).
+podSecurityContext:
+  fsGroup: 101
+
+# -- Container-level security context.
+securityContext:
+  runAsUser: 100
+  runAsGroup: 101
+  runAsNonRoot: true
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# =============================================================================
+# ClamAV / REST configuration
+# All knobs map 1:1 to the image's documented environment variables and are
+# injected via a ConfigMap (PROXY_* and SSL secrets are layered on top).
+# =============================================================================
+config:
+  # -- REST HTTP port (container).
+  port: 9000
+  # -- REST HTTPS port (container). Requires `tls.enabled=true`.
+  sslPort: 9443
+  # -- Amount of data scanned per file. K/M/G suffix accepted.
+  maxScanSize: "100M"
+  # -- Reject files larger than this. K/M/G suffix accepted.
+  maxFileSize: "25M"
+  # -- Maximum archive recursion depth.
+  maxRecursion: 16
+  # -- Maximum number of files scanned within a single archive.
+  maxFiles: 10000
+  # -- Maximum embedded PE file size to scan.
+  maxEmbeddedPE: "10M"
+  # -- Maximum HTML size to normalize.
+  maxHtmlNormalize: "10M"
+  # -- Maximum normalized HTML size to scan.
+  maxHtmlNoTags: "2M"
+  # -- Maximum script size to normalize.
+  maxScriptNormalize: "5M"
+  # -- Maximum ZIP size to reanalyze for type recognition.
+  maxZipTypeRcg: "1M"
+  # -- Maximum number of partitions per raw disk image to scan.
+  maxPartitions: 50
+  # -- Maximum number of icons in PE files to scan.
+  maxIconsPE: 100
+  # -- Seconds the REST process waits for clamd to become ready at startup.
+  maxReconnectTime: 30
+  # -- Maximum PCRE match calls per scan.
+  pcreMatchLimit: 100000
+  # -- Maximum recursive PCRE match calls per scan.
+  pcreRecMatchLimit: 2000
+  # -- Daily freshclam signature update checks (valid range 1..50).
+  signatureChecks: 2
+  # -- CORS Access-Control-Allow-Origin (semicolon-separated, `*` for any).
+  allowOrigins: "*"
+  # -- Container timezone (used by clamd logs + scheduled freshclam runs).
+  timezone: "Europe/Zurich"
+
+# -- Extra environment variables to inject verbatim into the container.
+# Example:
+#   extraEnv:
+#     - name: GODEBUG
+#       value: "madvdontneed=1"
+extraEnv: []
+
+# -- Extra container ports beyond http/https (advanced; rarely needed).
+extraPorts: []
+
+# =============================================================================
+# Proxy configuration (freshclam signature downloads)
+# Required only when the cluster egress goes through a forward proxy.
+# =============================================================================
+proxy:
+  # -- Forward proxy hostname (omit scheme).
+  server: ""
+  # -- Forward proxy port.
+  port: ""
+  # -- Forward proxy username.
+  username: ""
+  # -- Forward proxy password. **Avoid inline passwords in production** —
+  # rendered manifests + Helm release history will contain the cleartext.
+  # Prefer `proxy.existingSecret`.
+  password: ""
+  # -- Name of an existing Secret holding the proxy password.
+  existingSecret: ""
+  # -- Key in `proxy.existingSecret` that stores the password.
+  existingSecretKey: "proxy-password"
+
+# =============================================================================
+# TLS (HTTPS terminator inside the container)
+# =============================================================================
+tls:
+  # -- Mount TLS material into /etc/ssl/clamav-rest and expose `sslPort`.
+  enabled: false
+  # -- Name of an existing `kubernetes.io/tls` Secret. Wins over inline cert/key.
+  existingSecret: ""
+  # -- Inline PEM certificate. Used only when `existingSecret` is empty.
+  cert: ""
+  # -- Inline PEM private key. Used only when `existingSecret` is empty.
+  key: ""
+
+# =============================================================================
+# Custom freshclam.conf
+# Enabling this fully replaces the in-image freshclam config — make sure your
+# overlay still sets `Foreground yes`, `DatabaseDirectory /clamav/data`, and
+# `NotifyClamd /clamav/etc/clamd.conf` or freshclam will not notify clamd.
+# =============================================================================
+freshclamConfig:
+  # -- Mount a custom freshclam.conf (overrides signatureChecks + proxy.*).
+  enabled: false
+  # -- Use an existing ConfigMap that exposes a `freshclam.conf` key.
+  existingConfigMap: ""
+  # -- Inline freshclam.conf body. Ignored if `existingConfigMap` is set.
+  config: ""
+  # Example:
+  #   config: |
+  #     Foreground yes
+  #     DatabaseDirectory /clamav/data
+  #     NotifyClamd /clamav/etc/clamd.conf
+  #     Checks 2
+  #     DatabaseMirror database.clamav.net
+
+# =============================================================================
+# Persistence (signature database under /clamav/data)
+# Persisting the DB shortens cold starts but caps the chart at a single replica
+# unless the StorageClass exposes ReadWriteMany.
+# =============================================================================
+persistence:
+  # -- Create a PVC mounted at /clamav/data.
+  enabled: false
+  # -- Reuse an existing PVC instead of creating one.
+  existingClaim: ""
+  # -- StorageClass name. Empty value uses the cluster default.
+  storageClass: ""
+  # -- Access modes.
+  accessModes:
+    - ReadWriteOnce
+  # -- Requested volume size.
+  size: 2Gi
+  # -- Extra annotations for the PVC.
+  annotations: {}
+
+# =============================================================================
+# Service
+# =============================================================================
+service:
+  # -- Service type.
+  type: ClusterIP
+  # -- External HTTP port.
+  httpPort: 9000
+  # -- External HTTPS port. Only meaningful when `tls.enabled=true`.
+  httpsPort: 9443
+  # -- Annotations for the Service.
+  annotations: {}
+  # -- LoadBalancer source ranges. Honoured only when type=LoadBalancer.
+  loadBalancerSourceRanges: []
+
+# =============================================================================
+# Ingress
+# =============================================================================
+ingress:
+  # -- Render an Ingress for the HTTP port.
+  enabled: false
+  # -- IngressClassName (e.g. `nginx`, `traefik`).
+  className: ""
+  # -- Ingress annotations.
+  annotations: {}
+  # -- Ingress hosts. Each `paths[].pathType` defaults to `Prefix`.
+  hosts:
+    - host: clamav-rest.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- Ingress TLS blocks (`hosts` + `secretName`).
+  tls: []
+
+# =============================================================================
+# Resources
+# Defaults sized for a small idle scanner. Real-world tuning is dominated by
+# concurrent scan request size — bump memory limits proportionally.
+# =============================================================================
+# -- Container resource requests/limits.
+resources:
+  requests:
+    cpu: 100m
+    memory: 2Gi
+  limits:
+    cpu: 500m
+    memory: 4Gi
+
+# =============================================================================
+# Health probes
+# The container has no dedicated `/healthz` — `/` returns a JSON stats blob
+# once clamd has finished loading the signature database (~30-90s cold). Tune
+# `initialDelaySeconds` upwards if your cluster pulls the signature DB on
+# every restart (i.e. `persistence.enabled=false`).
+# =============================================================================
+# -- Liveness probe.
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 300
+  periodSeconds: 60
+  failureThreshold: 3
+
+# -- Readiness probe.
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 20
+  failureThreshold: 15
+
+# -- Startup probe. Off by default for parity with the v1.x chart; set
+# `enabled: true` to opt into a longer cold-start budget without relaxing the
+# liveness probe.
+startupProbe:
+  enabled: false
+  httpGet:
+    path: /
+    port: http
+  periodSeconds: 10
+  failureThreshold: 60
+
+# =============================================================================
+# Deployment strategy
+# =============================================================================
+# -- Update strategy. RollingUpdate is the only sensible default; switching
+# to Recreate makes signature-DB downtime worse without any upside.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# -- minReadySeconds on the Deployment.
+minReadySeconds: 20
+
+# -- terminationGracePeriodSeconds on the pod. clamd has nothing to flush so
+# the default kubelet 30s grace is more than enough.
+terminationGracePeriodSeconds: 30
+
+# =============================================================================
+# Scheduling
+# =============================================================================
+# -- Tolerations applied to the pod.
+tolerations:
+  - key: "node.kubernetes.io/unreachable"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 30
+  - key: "node.kubernetes.io/not-ready"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 30
+
+# -- nodeSelector applied to the pod.
+nodeSelector: {}
+
+# -- Affinity rules applied to the pod.
+affinity: {}
+
+# -- topologySpreadConstraints applied to the pod.
+topologySpreadConstraints: []
+
+# -- priorityClassName applied to the pod.
+priorityClassName: ""
+
+# =============================================================================
+# Pod Disruption Budget
+# =============================================================================
+podDisruptionBudget:
+  # -- Render a PDB. Only meaningful with `replicaCount >= 2` or HPA enabled.
+  enabled: false
+  # -- Either set minAvailable OR maxUnavailable, not both.
+  minAvailable: 1
+  # -- Either set minAvailable OR maxUnavailable, not both.
+  maxUnavailable: ""
+
+# =============================================================================
+# Prometheus / monitoring
+# The image exposes Prometheus metrics on the HTTP port at /metrics.
+# =============================================================================
+metrics:
+  serviceMonitor:
+    # -- Render a ServiceMonitor (requires the Prometheus Operator CRD).
+    enabled: false
+    # -- Namespace for the ServiceMonitor (defaults to the release namespace).
+    namespace: ""
+    # -- Scrape interval.
+    interval: 60s
+    # -- Scrape timeout.
+    scrapeTimeout: ""
+    # -- Scrape path.
+    path: /metrics
+    # -- Scheme (`http` or `https`).
+    scheme: http
+    # -- TLS config block for HTTPS scraping (passed verbatim).
+    tlsConfig: {}
+    # -- Extra labels for the ServiceMonitor (e.g. release: prometheus).
+    additionalLabels: {}
+    # -- Prometheus relabeling rules.
+    relabelings: []
+    # -- Prometheus metric relabeling rules.
+    metricRelabelings: []
+
+# =============================================================================
+# Network policy
+# Renders both a vanilla NetworkPolicy and a CiliumNetworkPolicy when enabled.
+# The Cilium variant adds DNS egress rules so freshclam can resolve
+# database.clamav.net through kube-dns.
+# =============================================================================
+networkPolicy:
+  # -- Enable NetworkPolicy + CiliumNetworkPolicy.
+  enabled: false
+  # -- Render the vanilla NetworkPolicy resources (default-deny + selectors).
+  vanilla: true
+  # -- Render the CiliumNetworkPolicy (DNS egress + FQDN allow-list).
+  cilium: false
+  # -- namespaceSelector for the Prometheus scrape allow rule.
+  prometheusNamespaceSelector: {}
+  # -- podSelector for the Prometheus scrape allow rule.
+  prometheusPodSelector: {}
+  # -- Additional vanilla NetworkPolicy ingress rules (raw list).
+  additionalIngress: []
+  # -- Additional CiliumNetworkPolicy egress rules (raw list).
+  # Example:
+  #   ciliumEgressAdditionalRules:
+  #     - toFQDNs:
+  #         - matchPattern: "*.clamav.net"
+  #       toPorts:
+  #         - ports:
+  #             - port: "443"
+  #               protocol: TCP
+
+  ciliumEgressAdditionalRules: []
+
+# =============================================================================
+# Horizontal Pod Autoscaler
+# =============================================================================
+autoscaling:
+  # -- Render an HPA. Mutually exclusive with `.Values.replicaCount`.
+  enabled: false
+  # -- Minimum replicas the HPA will scale down to.
+  minReplicas: 2
+  # -- Maximum replicas the HPA will scale up to.
+  maxReplicas: 10
+  # -- Target CPU utilization (omit/set to "" to disable the CPU metric).
+  targetCPUUtilizationPercentage: 80
+  # -- Target memory utilization (omit/set to "" to disable the memory metric).
+  targetMemoryUtilizationPercentage: ""
+  # -- Behavior block forwarded verbatim to the HPA spec.
+  behavior: {}
+
+# =============================================================================
+# Image pull credential via ExternalSecret (External Secrets Operator)
+# Renders a dockerconfigjson Secret backed by a Vault entry. Off by default;
+# turning it on requires the External Secrets Operator + a configured
+# ClusterSecretStore.
+# =============================================================================
+imageRepositoryCredential:
+  # -- Render the ExternalSecret.
+  create: false
+  # -- Target Secret name (also consumed by the deployment as imagePullSecret).
+  name: ""
+  # -- Vault path holding the dockerconfigjson payload.
+  dockerConfigJsonVaultPath: ""
+  # -- ClusterSecretStore the ExternalSecret should reference.
+  clusterStore: "vault-kv-v2"
+  # -- Refresh interval forwarded to ExternalSecret.spec.refreshInterval.
+  refreshInterval: "300s"
+
+# =============================================================================
+# Escape hatches
+# =============================================================================
+# -- Extra raw manifests templated against `.` and emitted as-is. Useful for
+# ExternalSecrets, CronJobs, AlertmanagerConfigs, etc. without a sibling chart.
+extraManifests: []
+# Example:
+#   extraManifests:
+#     - apiVersion: v1
+#       kind: ConfigMap
+#       metadata:
+#         name: clamav-rest-extra
+#       data:
+#         key: value

@@ -1,0 +1,19 @@
+# Scenario 04: warm signature DB + autoscaling + disruption budget.
+# Exercises the PVC, the HPA (CPU + memory targets), the PDB, and the
+# startupProbe opt-in. Single accessMode RWO with autoscaling is intentional
+# here — the render must still succeed; the NOTES warning covers the runtime
+# caveat.
+persistence:
+  enabled: true
+  size: 4Gi
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: 80
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+startupProbe:
+  enabled: true

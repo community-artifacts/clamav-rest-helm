@@ -1,0 +1,27 @@
+# Scenario 06: Ingress fronting + the extraManifests escape hatch +
+# ExternalSecret-backed image pull credential.
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+  hosts:
+    - host: clamav-rest.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: clamav-rest-ingress-tls
+      hosts:
+        - clamav-rest.example.com
+imageRepositoryCredential:
+  create: true
+  name: registry-creds
+  dockerConfigJsonVaultPath: kv/data/registry/clamav-rest
+extraManifests:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: "{{ .Release.Name }}-extra"
+    data:
+      note: "rendered through tpl against the release context"

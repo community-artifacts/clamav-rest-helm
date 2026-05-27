@@ -1,0 +1,40 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.cilium }}
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "clamav-rest.fullname" . }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "clamav-rest.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "clamav-rest.selectorLabels" . | nindent 6 }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+    # FQDN allow-list for freshclam DB mirrors (resolved via kube-dns above).
+    - toFQDNs:
+        - matchPattern: "*.clamav.net"
+        - matchName: "database.clamav.net"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP
+    {{- with .Values.networkPolicy.ciliumEgressAdditionalRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

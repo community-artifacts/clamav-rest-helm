@@ -1,0 +1,118 @@
+name: Bump chart version on develop → main PR
+
+# Fires only on a pull_request from `develop` (or any of the topic
+# prefixes that land on develop: `dev/**`, `feat/**`, `fix/**`,
+# `hotfix/**`) targeting `main`. Computes the chart-version bump from
+# conventional commits in the PR, applies it to Chart.yaml /
+# RELEASE-NOTES.md / the artifacthub.io/changes annotation, and pushes
+# the result back onto the PR head branch with `[skip ci]` so the rest
+# of the chart-CI (Validate Chart) doesn't loop on the bot commit.
+#
+# The bot only touches:
+#   - charts/clamav-rest/Chart.yaml#version
+#   - charts/clamav-rest/Chart.yaml#annotations."artifacthub.io/changes"
+#   - charts/clamav-rest/RELEASE-NOTES.md  (stub heading + TODO marker)
+#
+# Maintainer responsibilities BEFORE merging the PR to main:
+#   1. Review the auto-bumped version.
+#   2. Replace the `<!-- TODO -->` block in RELEASE-NOTES.md with the
+#      real prose changelog.
+#   3. Sanity-check the auto-generated artifacthub.io/changes entries.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    if: |
+      (github.event.pull_request.head.ref == 'develop' ||
+       startsWith(github.event.pull_request.head.ref, 'dev/') ||
+       startsWith(github.event.pull_request.head.ref, 'feat/') ||
+       startsWith(github.event.pull_request.head.ref, 'fix/') ||
+       startsWith(github.event.pull_request.head.ref, 'hotfix/'))
+      && !contains(github.event.pull_request.labels.*.name, 'bot/release')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head with full history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up git author
+        run: |
+          git config user.name  "clamav-rest-helm[bot]"
+          git config user.email "clamav-rest-helm-bot@users.noreply.github.com"
+
+      - name: Run bump script
+        id: bump
+        run: |
+          set -e
+          output=$(./scripts/bump_chart_version.sh 2>&1 1>/tmp/bump.stdout)
+          cat /tmp/bump.stdout
+          echo "$output" >&2
+          {
+            echo "bump_level=$(grep -E '^BUMP_LEVEL=' /tmp/bump.stdout | cut -d= -f2 || echo none)"
+            echo "previous_version=$(grep -E '^PREVIOUS_VERSION=' /tmp/bump.stdout | cut -d= -f2 || echo)"
+            echo "new_version=$(grep -E '^NEW_VERSION=' /tmp/bump.stdout | cut -d= -f2 || echo)"
+            echo "changed=$(grep -E '^CHANGED=' /tmp/bump.stdout | cut -d= -f2 || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit + push the bump (if anything changed)
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          git add charts/clamav-rest/Chart.yaml charts/clamav-rest/RELEASE-NOTES.md
+          git diff --cached
+          git commit -m "chore(release): bump chart to ${{ steps.bump.outputs.new_version }} [skip ci]
+
+          Automated by .github/workflows/version-bump.yml on PR
+          #${{ github.event.pull_request.number }}.
+
+          - Previous version: ${{ steps.bump.outputs.previous_version }}
+          - Bump level:       ${{ steps.bump.outputs.bump_level }}
+          - New version:      ${{ steps.bump.outputs.new_version }}
+
+          Reviewer: replace the RELEASE-NOTES.md TODO marker and sanity-check
+          the regenerated artifacthub.io/changes block before approving."
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
+      - name: Comment on PR
+        if: steps.bump.outputs.changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              `### 🤖 Chart version bumped to \`${{ steps.bump.outputs.new_version }}\``,
+              ``,
+              `| | |`,
+              `|---|---|`,
+              `| Previous version | \`${{ steps.bump.outputs.previous_version }}\` |`,
+              `| Bump level       | \`${{ steps.bump.outputs.bump_level }}\` |`,
+              `| New version      | \`${{ steps.bump.outputs.new_version }}\` |`,
+              ``,
+              `Two things to verify before merging this PR to \`main\`:`,
+              ``,
+              `1. **Replace the \`<!-- TODO -->\` block in \`charts/clamav-rest/RELEASE-NOTES.md\`** with the real prose changelog.`,
+              `2. **Skim the regenerated \`artifacthub.io/changes\` block** in \`Chart.yaml\`; descriptions are pulled verbatim from commit subjects.`,
+              ``,
+              `If new commits land on \`${{ github.event.pull_request.head.ref }}\` after this comment, the bot will refresh the bump idempotently.`,
+            ].join("\n");
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Skipped — no chart-touching changes
+        if: steps.bump.outputs.changed == 'false'
+        run: |
+          echo "::notice::No chart-touching commits since the last release tag — nothing to bump."

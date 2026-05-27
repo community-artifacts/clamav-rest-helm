@@ -1,0 +1,129 @@
+name: Validate Chart
+
+# Validation pipeline. Runs on:
+#   - push to `develop` itself (safety net for direct-push bypass cases;
+#     the bot's release commits carry `[skip ci]` and are ignored)
+#   - PR opened / synced / reopened targeting `develop` or `main`
+#     (covers topic branches: a push to `dev/<topic>` only triggers CI
+#      once a PR into `develop` is open, via the `synchronize` event)
+#   - manual `workflow_dispatch`
+#
+# Topic-branch pushes intentionally do NOT trigger CI on their own —
+# pre-PR commits run locally; CI engages the moment a PR is opened, so
+# runner-minutes are spent on work that's actually up for review.
+#
+# Never runs on `main` itself — `main` is reached only via merged PRs from
+# `develop` and triggers the Release Charts workflow instead. See
+# CONTRIBUTING.md ("Branch strategy").
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint
+        run: helm lint charts/clamav-rest
+
+  scenarios:
+    name: Render scenario matrix (helm template)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Run scenario matrix (phase 1 — template only)
+        run: ./scripts/run_scenarios.sh
+
+  schema:
+    name: values.schema.json well-formed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JSON syntax
+        run: jq empty charts/clamav-rest/values.schema.json
+      - name: Verify every top-level key in values.yaml has a schema entry
+        run: |
+          set -e
+          mapfile -t values_keys < <(awk '/^[a-zA-Z_]+:/ {sub(":.*",""); print}' charts/clamav-rest/values.yaml | sort -u)
+          missing=()
+          for key in "${values_keys[@]}"; do
+            if ! jq -e --arg k "$key" '.properties | has($k)' charts/clamav-rest/values.schema.json >/dev/null; then
+              missing+=("$key")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::values.yaml has top-level keys not declared in values.schema.json:"
+            printf '  - %s\n' "${missing[@]}"
+            exit 1
+          fi
+          echo "All top-level values keys are declared in values.schema.json."
+
+  kubeconform:
+    name: kubeconform (validate rendered manifests vs Kubernetes API)
+    runs-on: ubuntu-latest
+    needs: scenarios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+          kubeconform -v
+      - name: Render + validate each scenario
+        run: |
+          set -euo pipefail
+          fail=0
+          for scenario in tests/scenarios/*.values.yaml; do
+            short=$(basename "$scenario" .values.yaml)
+            echo "==> $short"
+            if ! helm template ci charts/clamav-rest -f "$scenario" 2>/tmp/err.log \
+                  | kubeconform -strict -ignore-missing-schemas \
+                      -schema-location default \
+                      -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+                      -summary -; then
+              fail=$((fail + 1))
+              cat /tmp/err.log
+            fi
+          done
+          exit $fail
+
+  minikube:
+    name: minikube install (representative scenarios)
+    runs-on: ubuntu-latest
+    needs: [lint, scenarios]
+    if: ${{ github.event_name == 'push' || github.event.pull_request.draft == false }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Start minikube
+        uses: medyagh/setup-minikube@latest
+        with:
+          driver: docker
+          memory: 6g
+          cpus: 2
+          addons: storage-provisioner-rancher,default-storageclass
+      - name: Defaults — install / wait / uninstall
+        run: |
+          kubectl create ns ci-01 --dry-run=client -o yaml | kubectl apply -f -
+          helm install t01 charts/clamav-rest -n ci-01 \
+            -f tests/scenarios/01-defaults.values.yaml \
+            --wait --timeout 10m
+          helm uninstall t01 -n ci-01
+          kubectl delete ns ci-01 --wait=false

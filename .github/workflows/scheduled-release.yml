@@ -1,0 +1,157 @@
+name: Scheduled release
+
+# Nightly auto-release using the Bumpy quantity-based SemVer strategy.
+# Once a day at 02:00 UTC the job:
+#   1. Skips if `develop` has no commits ahead of `main`.
+#   2. Calls scripts/bumpy_decide.sh to compute the bump level from the
+#      *size* of changes since the last `clamav-rest-X.0.0` baseline.
+#   3. Bumps `charts/clamav-rest/Chart.yaml#version`, regenerates the
+#      `artifacthub.io/changes` annotation, and inserts a
+#      `RELEASE-NOTES.md` stub heading.
+#   4. Commits the bump on `develop` with `[skip ci]`.
+#   5. Opens (or re-uses) a PR `develop` → `main` titled `Release X.Y.Z`,
+#      tagged with the `bot/release` label.
+#   6. Enables auto-merge. Merging to `main` triggers Release Charts.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  PR_LABEL: bot/release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether develop is ahead of main
+        id: ahead
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          n=$(git rev-list --count origin/main..HEAD)
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          if (( n == 0 )); then
+            echo "level=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip — develop already at main
+        if: steps.ahead.outputs.count == '0'
+        run: |
+          echo "::notice::develop is 0 commits ahead of main — no release today."
+
+      - name: Decide bump level (Bumpy)
+        if: steps.ahead.outputs.count != '0'
+        id: decide
+        run: |
+          ./scripts/bumpy_decide.sh | tee /tmp/bumpy.out
+          {
+            grep -E '^(LEVEL|NET_PCT|CHURN_PCT|ADDED|REMOVED|BASELINE|BASELINE_SIZE|BREAKING)=' /tmp/bumpy.out \
+              | awk -F= '{print tolower($1)"="$2}'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure git author
+        if: steps.ahead.outputs.count != '0'
+        run: |
+          git config user.name  "clamav-rest-helm[bot]"
+          git config user.email "clamav-rest-helm-bot@users.noreply.github.com"
+
+      - name: Bump chart version (forced level)
+        if: steps.ahead.outputs.count != '0'
+        id: bump
+        run: |
+          ./scripts/bump_chart_version.sh --level "${{ steps.decide.outputs.level }}" | tee /tmp/bump.out
+          {
+            grep -E '^(BUMP_LEVEL|PREVIOUS_VERSION|NEW_VERSION|CHANGED)=' /tmp/bump.out \
+              | awk -F= '{print tolower($1)"="$2}'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit + push bump (if anything changed)
+        if: steps.ahead.outputs.count != '0' && steps.bump.outputs.changed == 'true'
+        run: |
+          git add charts/clamav-rest/Chart.yaml charts/clamav-rest/RELEASE-NOTES.md
+          git diff --cached
+          git commit -m "chore(release): scheduled bump to ${{ steps.bump.outputs.new_version }} [skip ci]
+
+          Triggered by .github/workflows/scheduled-release.yml on $(date -u +%Y-%m-%d).
+
+          Bumpy decision:
+          - Commits on develop ahead of main: ${{ steps.ahead.outputs.count }}
+          - Baseline:                         ${{ steps.decide.outputs.baseline }} (${{ steps.decide.outputs.baseline_size }} lines)
+          - Net change %:                     ${{ steps.decide.outputs.net_pct }}%
+          - Churn %:                          ${{ steps.decide.outputs.churn_pct }}%
+          - BREAKING CHANGE marker present:   ${{ steps.decide.outputs.breaking }}
+          - Bump level applied:               ${{ steps.bump.outputs.bump_level }}
+          - Previous version:                 ${{ steps.bump.outputs.previous_version }}
+          - New version:                      ${{ steps.bump.outputs.new_version }}"
+          git push origin HEAD:develop
+
+      - name: Ensure release label exists
+        if: steps.ahead.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "${{ env.PR_LABEL }}" \
+            --description "PR opened by the scheduled-release workflow; version-bump.yml skips PRs with this label." \
+            --color "fbca04" 2>/dev/null || true
+
+      - name: Open (or re-use) release PR
+        if: steps.ahead.outputs.count != '0'
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          new_ver="${{ steps.bump.outputs.new_version }}"
+          existing=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$existing" ]]; then
+            echo "Re-using existing release PR #$existing."
+            echo "number=$existing" >> "$GITHUB_OUTPUT"
+            gh pr edit "$existing" --add-label "${{ env.PR_LABEL }}" || true
+            exit 0
+          fi
+
+          gh pr create \
+            --base main \
+            --head develop \
+            --label "${{ env.PR_LABEL }}" \
+            --title "Release ${new_ver}" \
+            --body "$(cat <<EOF
+          Scheduled release PR — opened by \`.github/workflows/scheduled-release.yml\` at $(date -u +%Y-%m-%dT%H:%MZ).
+
+          | | |
+          |---|---|
+          | Commits on develop ahead of main | ${{ steps.ahead.outputs.count }} |
+          | Bumpy baseline                    | \`${{ steps.decide.outputs.baseline }}\` (${{ steps.decide.outputs.baseline_size }} lines) |
+          | Net change %                      | \`${{ steps.decide.outputs.net_pct }}%\` |
+          | Churn %                           | \`${{ steps.decide.outputs.churn_pct }}%\` |
+          | BREAKING CHANGE marker            | \`${{ steps.decide.outputs.breaking }}\` |
+          | Bump level applied                | \`${{ steps.bump.outputs.bump_level }}\` |
+          | Previous version                  | \`${{ steps.bump.outputs.previous_version }}\` |
+          | New version                       | \`${new_ver}\` |
+
+          The bump commit is already on \`develop\` with \`[skip ci]\`. Validate Chart will run against this PR's merge commit; once green, auto-merge lands it on \`main\` and Release Charts publishes \`clamav-rest-${new_ver}\` to \`gh-pages\`.
+
+          **Optional, before merge**: replace the \`<!-- TODO -->\` block at the top of \`charts/clamav-rest/RELEASE-NOTES.md\` with the human-readable changelog.
+          EOF
+          )"
+          number=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        if: steps.ahead.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge "${{ steps.pr.outputs.number }}" --auto --merge \
+            || echo "::warning::Could not enable auto-merge (likely because the repo doesn't have it enabled or the PR is already merged). Enable in Settings → General → 'Allow auto-merge'."

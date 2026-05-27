@@ -1,0 +1,16 @@
+# Scenario 03: custom freshclam.conf overlay + forward proxy for signature
+# downloads. Exercises the freshclam ConfigMap, the proxy env wiring, and the
+# generated proxy-password Secret.
+freshclamConfig:
+  enabled: true
+  config: |
+    Foreground yes
+    DatabaseDirectory /clamav/data
+    NotifyClamd /clamav/etc/clamd.conf
+    Checks 4
+    DatabaseMirror database.clamav.net
+proxy:
+  server: proxy.corp.example
+  port: 3128
+  username: scanner
+  password: changeme

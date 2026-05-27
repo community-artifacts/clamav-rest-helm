@@ -1,0 +1,170 @@
+name: Hotfix release
+
+# Immediate release path. Triggers on any push to `develop` whose tip
+# commit subject matches the hotfix marker (`hotfix:` /
+# `hotfix(<scope>):` / `fix!:` with `hotfix` in the body / a literal
+# `[HOTFIX]` tag). Same plumbing as the nightly cron, just fired the
+# moment a hotfix commit lands instead of waiting for 02:00 UTC.
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  PR_RELEASE_LABEL: bot/release
+  PR_HOTFIX_LABEL:  hotfix
+
+jobs:
+  detect:
+    name: Detect hotfix marker
+    runs-on: ubuntu-latest
+    outputs:
+      is_hotfix: ${{ steps.scan.outputs.is_hotfix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 2
+
+      - name: Scan tip commit subject + body
+        id: scan
+        run: |
+          subj=$(git log -1 --format=%s HEAD)
+          body=$(git log -1 --format=%b HEAD)
+          echo "Tip subject: $subj"
+          is_hotfix=false
+          if printf '%s' "$subj" | grep -qE '^chore\(release\):'; then
+            echo "Tip is a release bookkeeping commit; ignoring."
+          elif printf '%s' "$subj" | grep -qE '^hotfix(\([^)]+\))?:[[:space:]]'; then
+            is_hotfix=true
+          elif printf '%s' "$subj" | grep -qF '[HOTFIX]'; then
+            is_hotfix=true
+          elif printf '%s' "$subj" | grep -qE '^fix(\([^)]+\))?!?:[[:space:]]' \
+            && printf '%s' "$body" | grep -qi 'hotfix'; then
+            is_hotfix=true
+          elif printf '%s' "$body" | grep -qE '^HOTFIX:'; then
+            is_hotfix=true
+          fi
+          if [[ "$is_hotfix" == "true" ]]; then
+            echo "::notice::Hotfix marker detected on the tip commit."
+          fi
+          echo "is_hotfix=$is_hotfix" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: detect
+    if: needs.detect.outputs.is_hotfix == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git author
+        run: |
+          git config user.name  "clamav-rest-helm[bot]"
+          git config user.email "clamav-rest-helm-bot@users.noreply.github.com"
+
+      - name: Decide bump level (Bumpy, single-commit range)
+        id: decide
+        run: |
+          ./scripts/bumpy_decide.sh --range HEAD~1..HEAD | tee /tmp/bumpy.out
+          {
+            grep -E '^(LEVEL|NET_PCT|CHURN_PCT|ADDED|REMOVED|BASELINE|BASELINE_SIZE|BREAKING)=' /tmp/bumpy.out \
+              | awk -F= '{print tolower($1)"="$2}'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Bump chart version
+        id: bump
+        run: |
+          ./scripts/bump_chart_version.sh --level "${{ steps.decide.outputs.level }}" | tee /tmp/bump.out
+          {
+            grep -E '^(BUMP_LEVEL|PREVIOUS_VERSION|NEW_VERSION|CHANGED)=' /tmp/bump.out \
+              | awk -F= '{print tolower($1)"="$2}'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit + push bump
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          git add charts/clamav-rest/Chart.yaml charts/clamav-rest/RELEASE-NOTES.md
+          git diff --cached
+          git commit -m "chore(release): hotfix bump to ${{ steps.bump.outputs.new_version }} [skip ci]
+
+          Triggered by .github/workflows/hotfix-release.yml.
+
+          Bumpy decision (single-commit range HEAD~1..HEAD):
+          - Net change %:                   ${{ steps.decide.outputs.net_pct }}%
+          - Churn %:                        ${{ steps.decide.outputs.churn_pct }}%
+          - BREAKING CHANGE marker present: ${{ steps.decide.outputs.breaking }}
+          - Bump level applied:             ${{ steps.bump.outputs.bump_level }}
+          - Previous version:               ${{ steps.bump.outputs.previous_version }}
+          - New version:                    ${{ steps.bump.outputs.new_version }}"
+          git push origin HEAD:develop
+
+      - name: Ensure labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "${{ env.PR_RELEASE_LABEL }}" \
+            --description "PR opened by an automated release workflow; version-bump.yml no-ops on it." \
+            --color "fbca04" 2>/dev/null || true
+          gh label create "${{ env.PR_HOTFIX_LABEL }}" \
+            --description "Hotfix release — fast-tracked by hotfix-release.yml." \
+            --color "b60205" 2>/dev/null || true
+
+      - name: Open (or re-use) hotfix release PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          new_ver="${{ steps.bump.outputs.new_version }}"
+          existing=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$existing" ]]; then
+            echo "Re-using existing develop → main PR #$existing; tagging it as hotfix."
+            gh pr edit "$existing" \
+              --add-label "${{ env.PR_RELEASE_LABEL }}" \
+              --add-label "${{ env.PR_HOTFIX_LABEL }}"
+            echo "number=$existing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh pr create \
+            --base main \
+            --head develop \
+            --label "${{ env.PR_RELEASE_LABEL }}" \
+            --label "${{ env.PR_HOTFIX_LABEL }}" \
+            --title "Hotfix ${new_ver}" \
+            --body "$(cat <<EOF
+          🚑 **Hotfix release** — fast-tracked by \`.github/workflows/hotfix-release.yml\`. Skipped the nightly cron.
+
+          Triggering commit: \`$(git log -1 --format='%h %s' HEAD)\`
+
+          | | |
+          |---|---|
+          | Bumpy baseline                 | \`${{ steps.decide.outputs.baseline }}\` (${{ steps.decide.outputs.baseline_size }} lines) |
+          | Net change %                   | \`${{ steps.decide.outputs.net_pct }}%\` |
+          | Churn %                        | \`${{ steps.decide.outputs.churn_pct }}%\` |
+          | BREAKING CHANGE marker         | \`${{ steps.decide.outputs.breaking }}\` |
+          | Bump level applied             | \`${{ steps.bump.outputs.bump_level }}\` |
+          | Previous version               | \`${{ steps.bump.outputs.previous_version }}\` |
+          | New version                    | \`${new_ver}\` |
+
+          The bump commit is already on \`develop\` with \`[skip ci]\`. Validate Chart will run on this PR; once green, auto-merge lands it on \`main\` and Release Charts publishes \`clamav-rest-${new_ver}\` to \`gh-pages\`.
+
+          **Mandatory for a hotfix**: review the rendered chart for the fix actually being present, and edit the RELEASE-NOTES.md TODO marker with the human-readable description before auto-merge fires.
+          EOF
+          )"
+          number=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge "${{ steps.pr.outputs.number }}" --auto --merge \
+            || echo "::warning::Could not enable auto-merge (likely because the repo doesn't have it enabled, or the PR is already merged). Enable under Settings → General → 'Allow auto-merge'."
